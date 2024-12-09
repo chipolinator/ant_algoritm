@@ -174,7 +174,7 @@ class AntColonyVisualization(QMainWindow):
             self.canvas.update_graph(self.pheromones, self.current_path, self.current_ant)
         except ValueError:
             pass
-
+# Добавляем к узлам градиенты, а рёбрам - динамический цвет
 class GraphCanvas(QWidget):
     def __init__(self, graph, pheromones):
         super().__init__()
@@ -194,20 +194,12 @@ class GraphCanvas(QWidget):
         self.node_positions = self.generate_node_positions()
         super().resizeEvent(event)
 
-
     def generate_node_positions(self):
         num_nodes = self.graph.shape[0]
-        
-        # Преобразуем веса графа в матрицу расстояний (инверсия весов, чтобы больший вес = меньшее расстояние)
-        max_weight = np.max(self.graph)
-        distances = max_weight - self.graph
-        np.fill_diagonal(distances, 0)  # Диагональ = 0 (расстояние до себя)
-
-        # Применяем MDS для вычисления координат
+        distances = np.max(self.graph) - self.graph
+        np.fill_diagonal(distances, 0)
         mds = MDS(n_components=2, dissimilarity="precomputed", random_state=42)
         coords = mds.fit_transform(distances)
-
-        # Преобразуем координаты в позиции на канве
         width, height = self.width(), self.height()
         scaled_coords = {
             i: (
@@ -218,34 +210,31 @@ class GraphCanvas(QWidget):
         }
         return scaled_coords
 
-
     def update_graph(self, pheromones, path, iteration):
         self.pheromones = pheromones
-        self.current_path = path  # Красный путь будет пустым после завершения
+        self.current_path = path
         self.iteration = iteration
         self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-
         max_pheromone = np.max(self.pheromones) if np.max(self.pheromones) > 0 else 1
 
-        # Рисуем ребра с весами
+        # Рисуем рёбра с градиентом
         for i in range(self.graph.shape[0]):
             for j in range(i + 1, self.graph.shape[0]):
                 if self.graph[i, j] > 0:
-                    # Рисуем линии (ребра)
-                    thickness = max(1, int(self.pheromones[i, j] * 10))
-                    color = QColor(0, 0, 255, min(255, int(self.pheromones[i, j] * 255)))
-                    painter.setPen(QPen(color, thickness))
+                    pheromone_level = self.pheromones[i, j] / max_pheromone
+                    color = QColor(0, 0, 255, int(pheromone_level * 255))
+                    painter.setPen(QPen(color, max(1, int(pheromone_level * 10))))
                     start = self.node_positions[i]
                     end = self.node_positions[j]
                     painter.drawLine(*start, *end)
 
-        # Рисуем путь муравья (красный цвет)
+        # Рисуем путь муравья
         if self.current_path:
-            painter.setPen(QPen(QColor(255, 0, 0), 3))
+            painter.setPen(QPen(QColor(255, 0, 0), 3, Qt.DashLine))
             for i in range(len(self.current_path) - 1):
                 start = self.node_positions[self.current_path[i]]
                 end = self.node_positions[self.current_path[i + 1]]
@@ -254,16 +243,16 @@ class GraphCanvas(QWidget):
         # Рисуем узлы
         for i, (x, y) in self.node_positions.items():
             painter.setPen(QPen(Qt.black, 1))
-            painter.setBrush(Qt.white)
-            painter.drawEllipse(x - 10, y - 10, 20, 20)
+            painter.setBrush(QColor(100, 200, 255))
+            painter.drawEllipse(x - 12, y - 12, 24, 24)
+            painter.setPen(Qt.black)
             painter.drawText(x - 10, y + 30, f"{i}")
 
-        # Текст для итерации
-        painter.setPen(QPen(Qt.black, 1))
-        painter.setFont(self.font())
+        # Подпись итерации
+        painter.setPen(Qt.black)
         painter.drawText(10, 20, f"Итерация: {self.iteration}")
-
         painter.end()
+
 
 
 
