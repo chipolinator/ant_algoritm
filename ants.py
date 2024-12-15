@@ -1,130 +1,114 @@
 import sys
 import numpy as np
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QVBoxLayout, QWidget, QHBoxLayout, QLabel, QTableWidget,
-    QTableWidgetItem, QPushButton
+    QApplication, QMainWindow, QVBoxLayout, QWidget, QHBoxLayout, QLabel, QPushButton
 )
 from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtGui import QPainter, QPen, QColor
 from sklearn.manifold import MDS
-
 class AntColonyVisualization(QMainWindow):
     def __init__(self, graph, num_ants=100):
         super().__init__()
         self.graph = graph
         self.num_ants = num_ants
-        self.pheromones = np.full_like(graph, 0.2, dtype=float)  # Изначально феромоны равны 0.2
+        self.pheromones = np.full_like(graph, 0.2, dtype=float)
+        self.transition_probabilities = np.zeros_like(graph, dtype=float)
         self.current_ant = 0
-        self.paths = []  # История путей муравьев
-        self.probabilities = np.zeros_like(graph)  # Вероятности перехода
-        self.current_path = []  # Путь текущего муравья
+        self.current_path = []
 
         # Настройки окна
         self.setWindowTitle("Ant Colony Visualization")
-        self.setGeometry(100, 100, 1400, 800)
+        self.setFixedSize(1100, 800)  # Фиксированный размер окна
 
         # Основное окно
         central_widget = QWidget()
-        layout = QHBoxLayout()
-        central_widget.setLayout(layout)
+        main_layout = QHBoxLayout()
+        central_widget.setLayout(main_layout)
         self.setCentralWidget(central_widget)
 
         # Левая часть: граф
         self.canvas = GraphCanvas(self.graph, self.pheromones)
-        layout.addWidget(self.canvas)
+        self.canvas.setFixedSize(600, 650)  # Фиксированный размер графика
+        main_layout.addWidget(self.canvas)
 
-        # Правая часть: таблицы и графики
-        self.table_layout = QVBoxLayout()
-        layout.addLayout(self.table_layout)
+        # Правая часть: таблицы и кнопка
+        right_layout = QVBoxLayout()
+        right_layout.setContentsMargins(10, 10, 10, 10)  # Уменьшение отступов
+        right_layout.setSpacing(10)  # Уменьшение расстояния между таблицами
+        main_layout.addLayout(right_layout)
 
-        # Таблица весов
-        self.weight_table = QTableWidget()
-        self.update_weight_table()
-        self.table_layout.addWidget(QLabel("Весы графа"))
-        self.table_layout.addWidget(self.weight_table)
+        # Заголовок и таблица феромонов
+        pheromone_label = QLabel("Феромоны")
+        pheromone_label.setAlignment(Qt.AlignCenter)
+        pheromone_label.setStyleSheet("font-size: 16px; font-weight: bold;")  # Стилизация заголовка
+        right_layout.addWidget(pheromone_label)
 
-        # Таблица вероятностей
-        self.probability_table = QTableWidget()
-        self.update_probability_table()
-        self.table_layout.addWidget(QLabel("Вероятности переходов"))
-        self.table_layout.addWidget(self.probability_table)
+        self.pheromone_display = PheromoneDisplay(self.pheromones)
+        self.pheromone_display.setFixedSize(600, 600)  # Фиксированный размер таблицы
+        right_layout.addWidget(self.pheromone_display)
 
-        # Таблица феромонов
-        self.pheromone_table = QTableWidget()
-        self.update_pheromone_table()
-        self.table_layout.addWidget(QLabel("Уровни феромонов"))
-        self.table_layout.addWidget(self.pheromone_table)
+        # Заголовок и таблица вероятностей перехода
+        transition_label = QLabel("Вероятности перехода")
+        transition_label.setAlignment(Qt.AlignCenter)
+        transition_label.setStyleSheet("font-size: 16px; font-weight: bold;")  # Стилизация заголовка
+        right_layout.addWidget(transition_label)
 
-        # Управление
-        self.control_layout = QVBoxLayout()
+        self.transition_display = PheromoneDisplay(self.transition_probabilities)
+        self.transition_display.setFixedSize(600, 600)  # Фиксированный размер таблицы
+        right_layout.addWidget(self.transition_display)
+
+        # Кнопка управления
         self.next_ant_button = QPushButton("Следующий муравей")
+        self.next_ant_button.setFixedSize(200, 50)  # Фиксированный размер кнопки
         self.next_ant_button.clicked.connect(self.simulate_next_ant)
-        self.control_layout.addWidget(self.next_ant_button)
-        self.table_layout.addLayout(self.control_layout)
+        right_layout.addWidget(self.next_ant_button, alignment=Qt.AlignCenter)
 
-    def update_weight_table(self):
-        num_nodes = self.graph.shape[0]
-        self.weight_table.setRowCount(num_nodes)
-        self.weight_table.setColumnCount(num_nodes)
-        for i in range(num_nodes):
-            for j in range(num_nodes):
-                item = QTableWidgetItem(f"{self.graph[i, j]:.2f}")
-                item.setFlags(Qt.ItemIsEnabled)  # Сделать ячейки только для чтения
-                self.weight_table.setItem(i, j, item)
 
     def simulate_next_ant(self):
         if self.current_ant < self.num_ants:
-            path, probabilities = self.simulate_single_ant()
-            self.paths.append(path)
+            path = self.simulate_single_ant()
             self.current_ant += 1
             self.current_path = path
-            self.probabilities = probabilities
 
             # Обновление феромонов
             total_distance = sum(
                 self.graph[path[i], path[i + 1]] for i in range(len(path) - 1)
             )
             for i in range(len(path) - 1):
-                delta_pheromone = 0.2 / (total_distance ** 0.5)  # Уменьшить зависимость от длины пути
+                delta_pheromone = 0.2 / (total_distance ** 0.5)
                 self.pheromones[path[i], path[i + 1]] += delta_pheromone
                 self.pheromones[path[i + 1], path[i]] += delta_pheromone
 
             # Испарение феромонов
-            evaporation_rate = 0.05  # Коэффициент испарения (p)
+            evaporation_rate = 0.05
             self.pheromones *= (1 - evaporation_rate)
-
-            # Ограничиваем значения феромонов диапазоном [0, 1]
             self.pheromones = np.clip(self.pheromones, 0, 1)
+
+            # Обновляем вероятности перехода
+            self.update_transition_probabilities()
 
             # Обновляем интерфейс
             self.canvas.update_graph(self.pheromones, self.current_path, self.current_ant)
-            self.update_probability_table()
-            self.update_pheromone_table()
+            self.pheromone_display.update_pheromones(self.pheromones)
+            self.transition_display.update_pheromones(self.transition_probabilities)
         else:
-            # Все муравьи завершили
             self.next_ant_button.setText("Все муравьи завершили!")
-            self.current_path = []  # Убираем красный путь
-            self.canvas.update_graph(self.pheromones, self.current_path, self.current_ant)
-
 
     def simulate_single_ant(self):
         num_nodes = self.graph.shape[0]
         start = np.random.randint(num_nodes)
         visited = {start}
         path = [start]
-        probabilities = np.zeros_like(self.graph)
 
         while len(visited) < num_nodes:
             current = path[-1]
             probs = self.calculate_probabilities(current, visited)
-            probabilities[current] = probs
             next_node = np.random.choice(range(num_nodes), p=probs)
             path.append(next_node)
             visited.add(next_node)
 
-        # Замыкаем путь
         path.append(path[0])
-        return path, probabilities
+        return path
 
     def calculate_probabilities(self, current, visited):
         num_nodes = self.graph.shape[0]
@@ -142,39 +126,12 @@ class AntColonyVisualization(QMainWindow):
         total = np.sum(probabilities)
         return probabilities / total if total > 0 else np.zeros(num_nodes)
 
-    def update_probability_table(self):
+    def update_transition_probabilities(self):
         num_nodes = self.graph.shape[0]
-        self.probability_table.setRowCount(num_nodes)
-        self.probability_table.setColumnCount(num_nodes)
         for i in range(num_nodes):
-            for j in range(num_nodes):
-                item = QTableWidgetItem(f"{self.probabilities[i, j]:.2f}")
-                self.probability_table.setItem(i, j, item)
+            self.transition_probabilities[i, :] = self.calculate_probabilities(i, set())
 
-    def update_pheromone_table(self):
-        num_nodes = self.graph.shape[0]
-        self.pheromone_table.blockSignals(True)
-        self.pheromone_table.setRowCount(num_nodes)
-        self.pheromone_table.setColumnCount(num_nodes)
-        for i in range(num_nodes):
-            for j in range(num_nodes):
-                item = QTableWidgetItem(f"{self.pheromones[i, j]:.2f}")
-                self.pheromone_table.setItem(i, j, item)
-        self.pheromone_table.blockSignals(False)
-        self.pheromone_table.cellChanged.connect(self.on_pheromone_table_change)
 
-    def on_pheromone_table_change(self, row, column):
-        try:
-            new_value = float(self.pheromone_table.item(row, column).text())
-            self.pheromones[row, column] = new_value
-            self.pheromones[column, row] = new_value  # Симметричная матрица
-            self.pheromones = np.clip(self.pheromones, 0, 1)
-
-            # Перерисовка графа
-            self.canvas.update_graph(self.pheromones, self.current_path, self.current_ant)
-        except ValueError:
-            pass
-# Добавляем к узлам градиенты, а рёбрам - динамический цвет
 class GraphCanvas(QWidget):
     def __init__(self, graph, pheromones):
         super().__init__()
@@ -221,7 +178,7 @@ class GraphCanvas(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         max_pheromone = np.max(self.pheromones) if np.max(self.pheromones) > 0 else 1
 
-        # Рисуем рёбра с градиентом
+        # Рисуем рёбра
         for i in range(self.graph.shape[0]):
             for j in range(i + 1, self.graph.shape[0]):
                 if self.graph[i, j] > 0:
@@ -243,17 +200,109 @@ class GraphCanvas(QWidget):
         # Рисуем узлы
         for i, (x, y) in self.node_positions.items():
             painter.setPen(QPen(Qt.black, 1))
-            painter.setBrush(QColor(100, 200, 255))
-            painter.drawEllipse(x - 12, y - 12, 24, 24)
-            painter.setPen(Qt.black)
-            painter.drawText(x - 10, y + 30, f"{i}")
+            painter.drawEllipse(x - 7, y - 7, 14, 14)
 
         # Подпись итерации
         painter.setPen(Qt.black)
+
+        # Настройка шрифта: увеличение размера и установка жирного шрифта
+        font = painter.font()
+        font.setPointSize(12)  # Увеличенный размер шрифта
+        font.setBold(True)  # Жирный текст
+        painter.setFont(font)
+
+        # Отрисовка текста
         painter.drawText(10, 20, f"Итерация: {self.iteration}")
         painter.end()
 
 
+class PheromoneDisplay(QWidget):
+    def __init__(self, pheromones):
+        super().__init__()
+        self.pheromones = pheromones
+        self.setMinimumSize(800, 800)  # Минимальный размер виджета
+
+    def update_pheromones(self, pheromones):
+        self.pheromones = pheromones
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        rows, cols = self.pheromones.shape
+
+        # Расчет размеров ячеек
+        rect_width = self.width() / (cols + 1) * 0.8  # Ширина ячейки
+        rect_height = self.height() / (rows + 1) * 0.5  # Высота ячейки
+
+        # Увеличиваем размер шрифта
+        font = painter.font()
+        font.setPointSize(12)  # Размер шрифта
+        painter.setFont(font)
+
+        # Цвет цифр нумерации
+        painter.setPen(QPen(QColor(0, 128, 0), 2))  # Зеленый цвет для цифр
+
+        # Рисуем нумерацию столбцов сверху
+        for j in range(cols):
+            painter.drawText(
+                int((j + 1) * rect_width),  # Смещаем на одну ячейку вправо
+                int(0.3 * rect_height),  # Располагаем текст чуть выше первой строки
+                int(rect_width),
+                int(rect_height),
+                Qt.AlignCenter,
+                str(j + 1)  # Номер столбца
+            )
+
+        # Рисуем нумерацию строк справа
+        for i in range(rows):
+            painter.drawText(
+                int((cols + 0.8) * rect_width),  # Располагаем текст справа от последней колонки
+                int((i + 1) * rect_height),  # Смещаем на одну ячейку вниз
+                int(rect_width),
+                int(rect_height),
+                Qt.AlignCenter,
+                str(i + 1)  # Номер строки
+            )
+
+        # Рисуем разделяющие линии
+        painter.setPen(QPen(Qt.black, 2))  # Черные линии
+        # Горизонтальная линия под нумерацией столбцов
+        painter.drawLine(
+            int(rect_width),  # Начало под первым столбцом
+            int(rect_height*1.1),  # Под нумерацией столбцов
+            int((self.width() / (cols + 1) * 8.8)),  # Конец линии после последнего столбца
+            int(rect_height*1.1), # На том же уровне
+        )
+        # Вертикальная линия слева от содержимого матрицы
+        painter.drawLine(
+            int((self.width() / (cols + 1) * 8.8)),  # Левая граница под первым столбцом
+            int(rect_height*1.1),  # Начало под нумерацией строк
+            int((self.width() / (cols + 1) * 8.8)),  # Левая граница
+            int((rows + 1) * rect_height)  # Конец внизу
+        )
+
+        # Рисуем содержимое матрицы
+        painter.setPen(Qt.black)  # Черный цвет для текста матрицы
+        for i in range(rows):  # Перебираем все строки
+            for j in range(cols):  # Перебираем все столбцы
+                # Отображаем только элементы верхнего треугольника, включая диагональ
+                if i > j:
+                    continue
+
+                # Рисуем текст феромонов
+                text = f"{self.pheromones[i, j]:.2f}"  # Округление до двух знаков
+                painter.drawText(
+                    int((j + 1) * rect_width),  # Смещаем содержимое вправо
+                    int((i + 1) * rect_height),  # Смещаем содержимое вниз
+                    int(rect_width),
+                    int(rect_height),
+                    Qt.AlignCenter,
+                    text
+                )
+
+        painter.end()
 
 
 def main():

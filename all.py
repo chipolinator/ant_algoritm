@@ -75,6 +75,7 @@ class AntColonyAS:
         for i in range(len(path) - 1):
             self.pheromones[path[i], path[i + 1]] += delta_pheromone
             self.pheromones[path[i + 1], path[i]] += delta_pheromone
+import numpy as np
 
 class AntColonyASE:
     def __init__(self, graph):
@@ -82,18 +83,36 @@ class AntColonyASE:
         self.num_nodes = graph.shape[0]
         self.pheromones = np.full_like(graph, 1.0, dtype=float)
         self.num_ants = 100
+        self.evaporation_rate = 0.1  # Коэффициент испарения феромонов
+        self.q = 1.0  # Константа для обновления феромонов
+        self.global_best_path = None  # Хранение глобального лучшего пути
+        self.global_best_cost = float('inf')  # Хранение глобальной лучшей стоимости
 
     def run(self):
         best_cost = float('inf')
         best_path = []
 
         for _ in range(self.num_ants):
+            # Каждый муравей проходит путь
             path, cost = self.simulate_ant()
+
+            # Обновление лучшего пути текущей итерации
             if cost < best_cost:
                 best_cost = cost
                 best_path = path
 
-        return best_path, best_cost
+            # Обновление глобального лучшего пути
+            if cost < self.global_best_cost:
+                self.global_best_cost = cost
+                self.global_best_path = path
+
+            # Обновление феромонов по текущему пути
+            self.update_pheromones(path, cost)
+
+        # Дополнительное обновление феромонов для глобального лучшего пути
+        self.update_pheromones(self.global_best_path, self.global_best_cost, elite=True)
+
+        return self.global_best_path, self.global_best_cost
 
     def simulate_ant(self):
         start = np.random.randint(self.num_nodes)
@@ -104,17 +123,32 @@ class AntColonyASE:
         while len(visited) < self.num_nodes:
             current = path[-1]
             probs = np.ones(self.num_nodes)
-            probs[list(visited)] = 0  # Exclude visited nodes
-            probs /= np.sum(probs)
+            probs[list(visited)] = 0  # Исключаем посещенные узлы
+            probs /= np.sum(probs)  # Нормализация вероятностей
             next_node = np.random.choice(range(self.num_nodes), p=probs)
 
             path.append(next_node)
             visited.add(next_node)
             cost += self.graph[current, next_node]
 
-        cost += self.graph[path[-1], path[0]]  # Return to start
+        # Возвращение к стартовой точке
+        cost += self.graph[path[-1], path[0]]
         path.append(path[0])
         return path, cost
+
+    def update_pheromones(self, path, cost, elite=False):
+        # Испарение феромонов
+        self.pheromones *= (1 - self.evaporation_rate)
+
+        # Обновление феромонов на основе пути
+        delta_pheromone = self.q / cost
+        if elite:
+            delta_pheromone *= 2  # Увеличенный вклад для элитного пути
+
+        for i in range(len(path) - 1):
+            self.pheromones[path[i], path[i + 1]] += delta_pheromone
+            self.pheromones[path[i + 1], path[i]] += delta_pheromone  # Для симметричных графов
+
 
 class AntColonyMMAS:
     def __init__(self, graph):
@@ -122,16 +156,23 @@ class AntColonyMMAS:
         self.num_nodes = graph.shape[0]
         self.pheromones = np.full_like(graph, 0.5, dtype=float)
         self.num_ants = 100
+        self.tau_min = 0.01  # Минимальное значение феромонов
+        self.tau_max = 1.0   # Максимальное значение феромонов
+        self.alpha = 1.0     # Влияние феромонов
+        self.beta = 2.0      # Влияние эвристической информации
+        self.evaporation_rate = 0.1  # Коэффициент испарения феромонов
 
     def run(self):
         best_cost = float('inf')
         best_path = []
-        
+
         for _ in range(self.num_ants):
             path, cost = self.simulate_ant()
             if cost < best_cost:
                 best_cost = cost
                 best_path = path
+
+            self.update_pheromones(best_path, best_cost)
 
         return best_path, best_cost
 
@@ -143,18 +184,41 @@ class AntColonyMMAS:
 
         while len(visited) < self.num_nodes:
             current = path[-1]
-            probs = np.ones(self.num_nodes)
-            probs[list(visited)] = 0  # Exclude visited nodes
-            probs /= np.sum(probs)
+            probs = self.calculate_probabilities(current, visited)
             next_node = np.random.choice(range(self.num_nodes), p=probs)
-
             path.append(next_node)
             visited.add(next_node)
             cost += self.graph[current, next_node]
 
-        cost += self.graph[path[-1], path[0]]  # Return to start
+        cost += self.graph[path[-1], path[0]]  # Возвращение к старту
         path.append(path[0])
         return path, cost
+
+    def calculate_probabilities(self, current, visited):
+        probabilities = np.zeros(self.num_nodes)
+
+        for i in range(self.num_nodes):
+            if i not in visited:
+                tau = self.pheromones[current, i] ** self.alpha
+                eta = (1 / self.graph[current, i]) ** self.beta if self.graph[current, i] > 0 else 0
+                probabilities[i] = tau * eta
+
+        total = np.sum(probabilities)
+        return probabilities / total if total > 0 else np.zeros(self.num_nodes)
+
+    def update_pheromones(self, best_path, best_cost):
+        # Испарение феромонов
+        self.pheromones *= (1 - self.evaporation_rate)
+
+        # Обновление феромонов только по элитному пути
+        delta_pheromone = 1.0 / best_cost
+        for i in range(len(best_path) - 1):
+            self.pheromones[best_path[i], best_path[i + 1]] += delta_pheromone
+            self.pheromones[best_path[i + 1], best_path[i]] += delta_pheromone
+
+        # Ограничение значений феромонов
+        self.pheromones = np.clip(self.pheromones, self.tau_min, self.tau_max)
+
 
 class AntColonyComparator(QMainWindow):
     def __init__(self, graph, algorithms):
@@ -180,7 +244,7 @@ class AntColonyComparator(QMainWindow):
 
     def run_experiments(self):
         num_experiments = 10
-        num_nodes_range = range(10, 101, 10)
+        num_nodes_range = range(10, 71, 10)
         detailed_results = {"times": {algo.__name__: [] for algo in self.algorithms},
                             "costs": {algo.__name__: [] for algo in self.algorithms}}
 
@@ -215,7 +279,7 @@ class AntColonyComparator(QMainWindow):
         for algo_name, times in detailed_results["times"].items():
             ax1.plot(num_nodes_range, times, label=algo_name.replace("AntColony", ""), linewidth=3)
         ax1.set_title("Время выполнения", fontsize=14)
-        ax1.set_xlabel("Количество городо", fontsize=12)
+        ax1.set_xlabel("Количество городов", fontsize=12)
         ax1.set_ylabel("Время", fontsize=12)
         ax1.legend(fontsize=10)
         ax1.set_position([0.1, 0.55, 0.8, 0.35])
